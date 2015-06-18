@@ -80,7 +80,30 @@ int eval_string(const char* str) {
 
 int main(int argc, char** argv) {
 
-	RACR_INIT(env, "bytecode", NULL);
+	printf("before init\n");
+
+//	int mods = NULL
+	const char* mods[] = {
+		"mquat/properties",
+        "mquat/constants",
+		"mquat/ast",
+		"mquat/utils",
+		"mquat/basic-ag",
+		"mquat/ilp",
+		"mquat/ui",
+		"mquat/join",
+		"mquat/ast-generation",
+		"mquat/example-ast",
+		"mquat/ilp-measurement",
+		"mquat/ilp-test",
+		"mquat/ag-test",
+/*
+*/
+        NULL
+    };
+    
+    RACR_INIT(env, "bytecode", mods);
+	printf("after init\n");
 
 	global_env = env;
 	scheme_add_global(
@@ -93,7 +116,7 @@ int main(int argc, char** argv) {
 		scheme_make_prim_w_arity(prim_add_event, "add-event", 1, 5),
 		env);
 
-	eval_script("scheme.scm");
+	eval_script("mquat.scm");
 
 	server_run(argc, argv);
 
