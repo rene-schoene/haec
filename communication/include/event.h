@@ -12,9 +12,13 @@ struct Event {
 	Worker* worker;
 	double	load_size;
 	double	deadline;
+	double	max_e;
+	double	max_rt;
+	double	min_p;
 	int		work_id;
 	int		ack;
 	char*	scenario;
+	char*	objective;
 };
 
 
@@ -43,6 +47,8 @@ enum {
 	EVENT_E_METER_RESET,
 
 	EVENT_ADAPT,
+
+	EVENT_MQUAT_REQUEST,
 
 };
 
@@ -73,6 +79,8 @@ static inline const char* event_type_string(int type) {
 		"E_METER_RESET",
 
 		"ADAPT",
+
+		"EVENT_MQUAT_REQUEST",
 
 	};
 	return strings[type];

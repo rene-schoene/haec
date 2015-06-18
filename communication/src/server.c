@@ -51,10 +51,10 @@ void server_log_event(const char* fmt, ...) {
 static int server_command(char* cmd) {
 
 	double time = timestamp();
-	double duration, size;
+	double duration, size, max_e, max_rt, min_p;
 	int id, work_id;
 	Worker* w;
-	char scenario[256];
+	char scenario[256], objective[256];
 
 	if (strcmp(cmd, "exit") == 0) {
 		server.running = 0;
@@ -143,7 +143,15 @@ static int server_command(char* cmd) {
 		e->worker = w;
 		e->work_id = work_id;
 		e->load_size = size;
+	}
 
+	else if (sscanf(cmd, "request %d %s %lf %lf %lf", &work_id, objective, &max_e, &max_rt, &min_p) == 5) {
+		Event* e = event_append(EVENT_MQUAT_REQUEST);
+		e->work_id   = work_id;
+		e->objective = strdup(objective);
+		e->max_e     = max_e;
+		e->max_rt    = max_rt;
+		e->min_p     = min_p;
 	}
 
 	else {
@@ -387,6 +395,10 @@ void server_process_events(void) {
 
 		case EVENT_ADAPT:
 			racr_call_str("event-adapt", "d", time);
+			break;
+
+		case EVENT_MQUAT_REQUEST:
+			racr_call_str("event-request", "disddd", time, e->work_id, e->objective, e->max_e, e->max_rt, e->min_p);
 			break;
 
 		default:
