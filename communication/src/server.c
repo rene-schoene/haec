@@ -52,7 +52,7 @@ static int server_command(char* cmd) {
 
 	double time = timestamp();
 	double duration, size, max_e, max_rt, min_p;
-	int id, work_id;
+	int id, work_id, reply_port;
 	Worker* w;
 	char scenario[256], objective[256];
 
@@ -145,13 +145,14 @@ static int server_command(char* cmd) {
 		e->load_size = size;
 	}
 
-	else if (sscanf(cmd, "request %d %s %lf %lf %lf", &work_id, objective, &max_e, &max_rt, &min_p) == 5) {
+	else if (sscanf(cmd, "request %d %s %lf %lf %lf %d", &work_id, objective, &max_e, &max_rt, &min_p, &reply_port) == 6) {
 		Event* e = event_append(EVENT_MQUAT_REQUEST);
 		e->work_id   = work_id;
 		e->objective = strdup(objective);
 		e->max_e     = max_e;
 		e->max_rt    = max_rt;
 		e->min_p     = min_p;
+		e->reply_port= reply_port;
 	}
 
 	else {
@@ -251,6 +252,25 @@ static void server_receive(int s) {
 	return;
 ERROR:
 	error(1, 0, "server_receive");
+}
+
+static int check_name(const char* binVar, int* workers, int* particles) {
+	//check. if e.g. Sampling##KLD_5_700#r_1002 return 1 (set workers, particles). else return 0.
+	int result;
+	result = sscanf(binVar, "Sampling##KLD_%d_%d#*", workers, particles) == 2;
+	printf("Checking %s gives %d\n", binVar, result);
+	return result;
+}
+
+static _Bool starts_with(const char* string, const char* prefix)
+{
+    while(*prefix)
+    {
+        if(*prefix++ != *string++)
+            return 0;
+    }
+
+    return 1;
 }
 
 
@@ -399,16 +419,113 @@ void server_process_events(void) {
 
 		case EVENT_MQUAT_REQUEST:
 			racr_call_str("event-request", "disddd", time, e->work_id, e->objective, e->max_e, e->max_rt, e->min_p);
+			// invoke glpsol
+			int result = 1, workers, particles;
+			printf("Calling glpsol ...\n");
+			char buf[256], fout[256];
+			snprintf(&fout, 256, "ilps/%d.out", e->work_id);
+			snprintf(&buf, 256, "glpsol --lp ilps/%d.lp -o %s >/dev/null", e->work_id, fout);
+			int return_code = system(buf);
+			if(return_code > 0) {
+				printf("glpsol failed with %d\n", return_code);
+				workers = particles = 0;
+			} else {
+				// interpret result
+				FILE *fp;
+				fp = fopen(fout, "r");
+				if (fp == NULL) {
+					printf("Could not open result at '%s'\n", fout);
+				} else {
+					//read line by line
+					const size_t line_size = 300;
+					char* line = malloc(line_size);
+					int status = 1; //START
+					int row = 0;
+					char lastName[256];
+					double val, lb, ub;
+					while (fgets(line, line_size, fp) != NULL){
+						if(result == 0) {
+							break;
+						}
+//						printf(line);
+						switch(status) {
+							case 1: //Start
+								if(starts_with(line, "   No. Column")) { status = 2; printf("scanning vars..\n"); }
+								break;
+							case 2: //Name of var, or Name+value
+								if (sscanf(line, " %d b#%s", &row, lastName) == 2) { // Name of var
+									status = 3;
+									printf("found var %s\n", lastName);
+								} else if (sscanf(line, " %d b#%s * %lf %lf %lf ", &row, lastName, &val, &lb, &ub) == 5) {
+									printf("val of %s on same line is %lf\n", lastName, val);
+									if(val == 1) {
+										if(check_name(lastName, &workers, &particles)) {
+											result = 0;
+										}
+									}
+								}
+								break;
+							case 3: //Value of var
+								if(sscanf(line, " * %lf %lf %lf ", &val, &lb, &ub) == 3) {
+									printf("val of %s is %lf\n", lastName, val);
+									if(val == 1) {
+										if(check_name(lastName, &workers, &particles)) {
+											result = 0;
+										}
+									}
+								}
+								status = 2;
+								break;
+							default:
+								printf("Unknown status %d\n", status);
+								break;
+							}
+						}
+						fclose(fp);
+					}
+				}
+			// open socket to reply_port and send result
+			int socket_fd;
+			// TODO: check if localhost is enough
+			printf("create addr, reply to %d\n", e->reply_port);
+			struct sockaddr_in client = { AF_INET, htons(e->reply_port), { inet_addr("127.0.0.1") } };
+			printf("creating socket\n");
+//			socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+			socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
+			if (socket_fd < 0) error(1, 0, "socket\n");
+			printf("check if connected\n");
+			if (connect(socket_fd, (struct sockaddr*) &client, sizeof(client)) < 0) {
+				if (errno == ECONNREFUSED) {
+					printf("connection refused\n");
+					error(1, 0, "refused");
+				}
+				else {
+//					close(socket_fd);
+					perror("main");
+					error(1, 0, "connect");
+				}
+			} else {
+				// connected
+				printf("connected\n");
+				
+				return_code = sendf(socket_fd, "result %d %d %d", result, workers, particles);
+				printf("sent %d bytes, closing stream\n", return_code);
+				close(socket_fd);
+				printf("stream closed\n");
+			}
 			break;
 
 		default:
 			printf("unknown event: %d\n", e->type);
 			break;
 		}
-		free(e);
+		if (e->type != EVENT_MQUAT_REQUEST) {
+			printf("before free\n");
+			free(e);
+			printf("after free\n");
+		}
 	}
 }
-
 
 static void server_done(int sig) { server.running = 0; }
 

@@ -17,6 +17,7 @@ struct Event {
 	double	min_p;
 	int		work_id;
 	int		ack;
+	int		reply_port;
 	char*	scenario;
 	char*	objective;
 };

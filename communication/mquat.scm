@@ -12,6 +12,7 @@
 (define energy (:RealProperty ms pn-energy "J" 'runtime 'decreasing 'sum))
 (define response-time (:RealProperty ms "Response-time" "ms" 'runtime 'decreasing 'sum))
 (define precision (:RealProperty ms "Precision" #f 'runtime 'increasing 'agg))
+(define pal (list (cons 'energy energy) (cons 'response-time response-time) (cons 'precision precision)))
 ;; MetaParameter-Names and -Nodes
 ;(define workers "workers")
 ;(define particles "particles")
@@ -62,7 +63,7 @@
   (let ([pe (=search-pe ast (r worker-id))])
     (when (and (not (null? valid-former-stati)) (not (memq (->status pe) valid-former-stati)))
       (rewrite-terminal 'status pe error-state)
-      (info "worker" worker-id "now in error-state"))
+      (warn "worker" worker-id "now in error-state"))
     (rewrite-terminal 'status pe status)))
 
 (define (search-parent id) (if (eq? 0 id) (->HWRoot ast) (=search-pe ast (r id))))
@@ -79,9 +80,12 @@
             (when clause? (rewrite-delete clause?))))) ; delete existing clause
 
 (define (update-request-objective objective)
-  (let ([old-objective (->objective (<=request ast))])
-    (when (not (eq? old-objective objective))
-      (rewrite-terminal 'objective (<=request ast) (->name objective)))))
+  (let ([new-objective (assq objective pal)]
+        [old-objective (->objective (<=request ast))])
+    (if new-objective
+        (when (not (eq? old-objective (cdr new-objective)))
+          (rewrite-terminal 'objective (<=request ast) (->name (cdr new-objective))))
+        (warn "Unknown objective" objective))))
 
 (define (event-work-complete id time work-id)
   ; TODO do something useful

@@ -13,6 +13,7 @@ LF = -pthread -lrt
 
 all: server worker mquat.scm
 
+.PHONY: clean bytecode run
 
 SERVERSRC = src/main.c src/server.c src/cambri.c src/event.c src/worker.c
 SERVEROBJ = $(SERVERSRC:src/%.c=obj/%.o)
@@ -46,4 +47,5 @@ clean:
 	rm -rf obj server worker
 	rm -f status.log event.log cambri.log
 
-.PHONY: clean bytecode
+run: all
+	@rlwrap ./server
