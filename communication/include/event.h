@@ -20,6 +20,7 @@ struct Event {
 	int		reply_port;
 	char*	scenario;
 	char*	objective;
+	char	reply_ip[256];
 };
 
 

@@ -54,7 +54,7 @@ static int server_command(char* cmd) {
 	double duration, size, max_e, max_rt, min_p;
 	int id, work_id, reply_port;
 	Worker* w;
-	char scenario[256], objective[256];
+	char scenario[256], objective[256], reply_ip[256];
 
 	if (strcmp(cmd, "exit") == 0) {
 		server.running = 0;
@@ -143,21 +143,37 @@ static int server_command(char* cmd) {
 		e->worker = w;
 		e->work_id = work_id;
 		e->load_size = size;
-	}
-
-	else if (sscanf(cmd, "request %d %s %lf %lf %lf %d", &work_id, objective, &max_e, &max_rt, &min_p, &reply_port) == 6) {
-		Event* e = event_append(EVENT_MQUAT_REQUEST);
-		e->work_id   = work_id;
-		e->objective = strdup(objective);
-		e->max_e     = max_e;
-		e->max_rt    = max_rt;
-		e->min_p     = min_p;
-		e->reply_port= reply_port;
-	}
-
-	else {
-		printf("error: %s\n", cmd);
-		return 1;
+	} else {
+		int found = sscanf(cmd, "request %d %s %lf %lf %lf %d %s", &work_id, objective, &max_e, &max_rt, &min_p,
+			&reply_port, reply_ip);
+		if (found >= 6) {
+			Event* e = event_append(EVENT_MQUAT_REQUEST);
+			e->work_id   = work_id;
+			e->objective = strdup(objective);
+//			printf("1. %s -> %s\n", objective, e->objective);
+			e->max_e     = max_e;
+			e->max_rt    = max_rt;
+			e->min_p     = min_p;
+			e->reply_port= reply_port;
+//			char* p = strchr(reply_ip, ' ');
+//			if (p) *p++ = '\0';
+//			printf("2. %s -> %s, %s\n", objective, e->objective, reply_ip);
+			if(found == 7) {
+				strcpy(e->reply_ip, reply_ip);
+//				printf("found reply_ip: %s\n", e->reply_ip);
+			} else {
+				strcpy(e->reply_ip, "127.0.0.1");
+//				printf("using default reply_ip %s\n", e->reply_ip);
+			}
+//			printf("3. %s -> %s\n", objective, e->objective);
+//			printf("sscanf: %d %s %lf %lf %lf %d %s\n", work_id, objective, max_e, max_rt, min_p,
+//				reply_port, reply_ip);
+//			printf("event: %d %s %lf %lf %lf %d %s\n", e->work_id, e->objective, e->max_e, e->max_rt, e->min_p,
+//				e->reply_port, e->reply_ip);
+		} else {
+			printf("error: %s\n", cmd);
+			return 1;
+		}
 	}
 
 	return 0;
@@ -418,6 +434,7 @@ void server_process_events(void) {
 			break;
 
 		case EVENT_MQUAT_REQUEST:
+			printf("obj: %s\n", e->objective);
 			racr_call_str("event-request", "disddd", time, e->work_id, e->objective, e->max_e, e->max_rt, e->min_p);
 			// invoke glpsol
 			int result = 1, workers, particles;
@@ -486,9 +503,8 @@ void server_process_events(void) {
 				}
 			// open socket to reply_port and send result
 			int socket_fd;
-			// TODO: check if localhost is enough
-			printf("create addr, reply to %d\n", e->reply_port);
-			struct sockaddr_in client = { AF_INET, htons(e->reply_port), { inet_addr("127.0.0.1") } };
+			printf("create addr, reply to %s:%d\n", e->reply_ip, e->reply_port);
+			struct sockaddr_in client = { AF_INET, htons(e->reply_port), { inet_addr(e->reply_ip) } };
 			printf("creating socket\n");
 //			socket_fd = socket(AF_INET, SOCK_STREAM, 0);
 			socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
