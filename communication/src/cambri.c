@@ -11,16 +11,24 @@
 #include "event.h"
 
 
-enum {
-	NUM_CAMBRIS = 1,
-	PROFILE = 3
-};
+enum { PROFILE = 3 };
+
+FILE* cambri_log;
+FILE* status_log;
+
+static double energy = 0;
+double cambri_get_energy(void) { return energy; }
+void cambri_set_energy(double e) { energy = e; }
+
+int current_cache[NUM_CAMBRIS * 8] = {};
+
+int	cambri_get_current(int id) {
+	int index = 8 * (id / 1000 - 1) + (id % 1000 - 1);
+	return current_cache[index];
+}
 
 
 static int cambri_fds[NUM_CAMBRIS];
-static FILE* cambri_log;
-static FILE* status_log;
-
 
 static const char* get_tty_name(int c) {
 	if (c == 0) {
@@ -134,16 +142,7 @@ int cambri_read(int c, char* buf, int len) {
 }
 
 
-static double energy = 0;
-static int current_cache[NUM_CAMBRIS * 8] = {};
 
-int	cambri_get_current(int id) {
-	int i = 8*(id/1000 - 1)+(id%1000-1);
-	return current_cache[i];
-}
-
-double	cambri_get_energy(void) { return energy; }
-void	cambri_set_energy(double e) { energy = e; }
 
 
 void cambri_log_data(double time, char* scheduler) {
@@ -169,7 +168,7 @@ void cambri_log_data(double time, char* scheduler) {
 			next_second++;
 			for (i = 0; i < NUM_CAMBRIS * 8; i++) {
 				double power = power_acc[i] / sample_counter;
-				energy += power;
+				cambri_set_energy(cambri_get_energy() + power);
 				fprintf(cambri_log, " | %4.3f", power);
 			}
 			fprintf(cambri_log, "\n");
@@ -221,7 +220,7 @@ void cambri_log_data(double time, char* scheduler) {
 void cambri_set_mode(int id, int mode) {
 	int c = id / 1000 - 1;
 	if (c < 0 || c >= NUM_CAMBRIS || !cambri_fds[c]) return;
-	cambri_write(c, "mode %c %d %d", mode, id % 10, PROFILE);
+	cambri_write(c, "mode %c %d %d", mode, id % 1000, PROFILE);
 	char buf[1024] = {};
 	cambri_read(c, buf, sizeof(buf));
 }

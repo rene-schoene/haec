@@ -5,26 +5,19 @@
 
 
 typedef struct {
+	int is_switch;
 	int id;
 	int parent_id;
 	int state;
 	double timestamp;
 
+	// these are invalid for switches
 	struct in_addr addr;
 	unsigned short port;
 	int socket_fd;
 	int device_type;
 
 } Worker;
-
-
-typedef struct {
-	int id;
-	int parent_id;
-	int state;
-	double timestamp;
-
-} Switch;
 
 
 enum {
@@ -73,3 +66,4 @@ Worker* worker_next(Worker* w);
 Worker* worker_find_by_address(struct in_addr a, unsigned short p);
 Worker* worker_find_by_socket(int s);
 Worker* worker_find_by_id(int id);
+ssize_t worker_send(Worker* w, const char* format, ...);

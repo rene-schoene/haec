@@ -47,11 +47,16 @@
 
 
 
+;(define say (lambda (what) (display what)))
+;(define sayln (lambda (what) (displayln what)))
+(define say (lambda (what) #f))
+(define sayln (lambda (what) #f))
+
 
 
 (define predict-processing-timespan
   (lambda (load-size device-type)
-    (display "[FUNCTION] predict-processing-timespan\n")
+    (say "[FUNCTION] predict-processing-timespan\n")
     (/ load-size
        (device-characteristic-speed (hashtable-ref device-table device-type #f)))))
 
@@ -78,8 +83,9 @@
           (let
             ((backup-strategy (ast-child 'backupworkers n)))
              (cond
-               ((eq? backup-strategy 'one-two) (one-two))
-               ((eq? backup-strategy 'one-three) (idle-min 1 3))
+               ((eq? backup-strategy 'one-two)   (determine-num-backup-workers 1 2))
+               ((eq? backup-strategy 'one-three) (determine-num-backup-workers 1 3))
+               ((eq? backup-strategy 'magic)     (determine-num-backup-workers 2 3))
                (else backup-strategy))))))
 
 
@@ -87,13 +93,13 @@
       lookup-worker
       (Worker
         (lambda (n id)
-          (display "[ATTRIBUTE on Worker] lookup-worker\n")
+          (say "[ATTRIBUTE on Worker] lookup-worker\n")
           (if (= id (ast-child 'id n))
             n
             #f)))
       (CompositeWorker
         (lambda (n id)
-          (display "[ATTRIBUTE on CompositeWorker] lookup-worker\n")
+          (say "[ATTRIBUTE on CompositeWorker] lookup-worker\n")
           (if (= id (ast-child 'id n))
             n
             (ast-find-child*
@@ -102,32 +108,53 @@
               (ast-child 'Workers n))))))
 
     (ag-rule
+      ; returns a list of all workers (excluding switches) that satisfy a given condition
       get-filtered-workers
       (Worker
         #f
         (lambda (n check)
-          (display "[ATTRIBUTE on Worker ")
-          (display (ast-child 'id n))
-          (display "] get-filtered-workers: ")
-          (displayln (check n))
+          (say "[ATTRIBUTE on Worker ")
+          (say (ast-child 'id n))
+          (say "] get-filtered-workers: ")
+          (sayln (check n))
           (if (check n) (list n) (list))))
       (CompositeWorker
         #f
         (lambda (n check)
-          (display "[ATTRIBUTE on CompositeWorker ")
-          (display (ast-child 'id n))
-          (displayln "] get-filtered-workers")
+          (say "[ATTRIBUTE on CompositeWorker ")
+          (say (ast-child 'id n))
+          (sayln "] get-filtered-workers")
           (fold-left
             (lambda (a b)
               (append a (att-value 'get-filtered-workers b check)))
             (list)
             (ast-children (ast-child 'Workers n))))))
 
+
+    (ag-rule
+      depth
+      (Config
+        (lambda (n) 0))
+      (AbstractWorker
+        (lambda (n) (+ 1 (att-value 'depth (ast-parent n))))))
+
+
+    (ag-rule
+      in-use?
+      (Config (lambda (n) #t))
+      (Switch
+        (lambda (n)
+          (exists
+            (lambda (child)
+              (memq (ast-child 'state child) '(RUNNING BOOTING)))
+            (ast-children (ast-child 'Workers n))))))
+
+
     (ag-rule
       schedule
       (Root
         (lambda (n time work-id load-size deadline)
-          (display "[ATTRIBUTE on Root] schedule\n")
+          (say "[ATTRIBUTE on Root] schedule\n")
           (let
             ((scheduler (ast-child 'scheduler n)))
             (att-value scheduler (ast-child 'Config n) time work-id load-size deadline)))))
@@ -137,7 +164,7 @@
       schedule-robin
       (Config
         (lambda (n time work-id load-size deadline)
-          (display "[ATTRIBUTE on Config] schedule-robin\n")
+          (say "[ATTRIBUTE on Config] schedule-robin\n")
           (let
             ((running-workers
                (att-value
@@ -165,7 +192,7 @@
       processing-timespan
       (Request
         (lambda (n)
-          (display "[ATTRIBUTE on Request] processing-timespan\n")
+          (say "[ATTRIBUTE on Request] processing-timespan\n")
           (let*
             ((queue (ast-parent n))
              (worker (ast-parent queue))
@@ -176,7 +203,7 @@
       predicted-termination-time
       (Request
         (lambda (n)
-          (display "[ATTRIBUTE on Request] predicted-termination-time\n")
+          (say "[ATTRIBUTE on Request] predicted-termination-time\n")
           (let*
             ((queue (ast-parent n))
              (worker (ast-parent queue))
@@ -192,7 +219,7 @@
       maximum-dispatch-deferment
       (Request
         (lambda (n)
-          (display "[ATTRIBUTE on Request] maximum-dispatch-deferment\n")
+          (say "[ATTRIBUTE on Request] maximum-dispatch-deferment\n")
           (let*
             ((index (ast-child-index n))
              (queue (ast-parent n))
@@ -211,23 +238,23 @@
       find-insertion-position
       (Worker
         (lambda (n deadline)
-          (display "[ATTRIBUTE on Worker] find-insertion-position\n")
+          (say "[ATTRIBUTE on Worker] find-insertion-position\n")
           (let*
             ((queue (ast-child 'Queue n))
              (queue-length (ast-num-children queue)))
             (if (= queue-length 0)
               (begin
-                (display "  CASE 1: queue length=0\n")
+                (say "  CASE 1: queue length=0\n")
                 1)
               (begin
-                (display "  CASE 2: queue length>0\n")
+                (say "  CASE 2: queue length>0\n")
                 (let next ((index 2))
                   (if (> index queue-length)
                     (begin
-                      (display "    CASE 2 A: index > queue-length\n")
+                      (say "    CASE 2 A: index > queue-length\n")
                       index)
                     (begin
-                      (display "    CASE 2 B: index <= queue-length\n")
+                      (say "    CASE 2 B: index <= queue-length\n")
                       (let ((next-deadline (ast-child 'deadline (ast-child index (ast-child 'Queue n)))))
                         (if (> next-deadline deadline)
                           index
@@ -237,7 +264,7 @@
       workload-heuristic
       (Worker
         (lambda (n)
-          (display "[ATTRIBUTE on Worker] workload-heuristic\n")
+          (say "[ATTRIBUTE on Worker] workload-heuristic\n")
           (let*
             ((queue (ast-child 'Queue n))
              (queue-length (ast-num-children queue)))
@@ -248,21 +275,22 @@
                       (+ sum (att-value 'processing-timespan (ast-child i queue)))))))))
       (Switch
         (lambda (n)
-          (display "[ATTRIBUTE on Switch] workload-heuristic\n")
+          (say "[ATTRIBUTE on Switch] workload-heuristic\n")
           (let*
             ((workers (ast-child 'Workers n))
              (num-workers (ast-num-children workers)))
-            (let next ((i 1) (sum 0))
+            (let next ((i 1) (sum -1000000))
               (if (> i num-workers)
                 sum
                 (next (+ i 1)
                       (+ sum (att-value 'workload-heuristic (ast-child i workers))))))))))
 
+
     (ag-rule
       schedule-batman
       (Worker
         (lambda (n time work-id load-size deadline)
-          (display "[ATTRIBUTE on Worker] schedule-batman\n")
+          (say "[ATTRIBUTE on Worker] schedule-batman\n")
           ; hint: worker must be in state RUNNING
           (if (not (eq? (ast-child 'state n) 'RUNNING))
             (cons #f (format "worker ~a is not running." (ast-child 'id n)))
@@ -293,7 +321,7 @@
 
       (CompositeWorker
         (lambda (n time work-id load-size deadline)
-          (display "[ATTRIBUTE on CompositeWorker] schedule-batman\n")
+          (say "[ATTRIBUTE on CompositeWorker] schedule-batman\n")
           ; hint: switch must be in state RUNNING
           (if (not (eq? (ast-child 'state n) 'RUNNING))
             (cons #f (format "composite worker ~a is not running." (ast-child 'id n)))
@@ -306,7 +334,7 @@
                        (att-value 'workload-heuristic a)
                        (att-value 'workload-heuristic b)))
                    workers)))
-              ;(display (length sorted-workers))
+              ;(say (length sorted-workers))
               (let next ((rest sorted-workers))
                 (if (null? rest)
                   (cons #f (format "request could not be scheduled."))
@@ -314,7 +342,7 @@
                     ((pair (att-value 'schedule-batman (car rest) time work-id load-size deadline))
                      (w (car pair))
                      (i (cdr pair)))
-                    ;(display i)
+                    ;(say i)
                     (if w
                       pair
                       (next (cdr rest)))))))))))
@@ -326,14 +354,14 @@
       'Root
       (list
         'schedule-robin
-        'one-two
+        'one-three
         ;'schedule-batman
         (create-ast
           'Config
           (list 0 'RUNNING 0 (create-ast-list (list))))))))
 
 
-(define display-ast
+(define say-ast
   (lambda ()
     (print-ast
       ast
@@ -362,7 +390,7 @@
   (lambda (id parent-id time)
     (add-node-to-ast
       parent-id
-      (create-ast spec 'Switch (list id 'RUNNING time (create-ast-list (list)))))))
+      (create-ast spec 'Switch (list id 'OFF time (create-ast-list (list)))))))
 
 
 (define set-backup-workers
@@ -370,58 +398,27 @@
     (rewrite-terminal 'backupworkers ast number)))
 
 
-(define one-two
-  (lambda ()
-    (display "[FUNCTION] one-two\n")
+
+(define determine-num-backup-workers
+  (lambda (min-num-backup-workers min-num-running-workers)
+    (say "[FUNCTION] determine-num-backup-workers\n")
     (let*
       ((working-workers
-             (att-value
-               'get-filtered-workers
-               config
-               (lambda (w)
-                 (let
-                   ((worker-working? (< 0 (ast-num-children (ast-child 'Queue w))))
-                    (worker-running? (eq? (ast-child 'state w) 'RUNNING)))
-                 ;(display "w: ")
-                 ; (displayln worker-working?)
-                 ;(display "r: ")
-                 ;(displayln worker-running?)
-                   worker-working?))))
+         (att-value
+           'get-filtered-workers
+           config
+           (lambda (w) (< 0 (ast-num-children (ast-child 'Queue w))))))
        (num-working-workers (length working-workers)))
-     ;(display "num-working-workers: ")
-     ;(displayln num-working-workers)
-      (if (< num-working-workers 1) (- 2 num-working-workers) 1))))
+      (max min-num-backup-workers
+           (- min-num-running-workers num-working-workers)))))
 
-
-(define idle-min
-  (lambda (idle min-idle)
-    (display "[FUNCTION] idle-min\n")
-    (let*
-      ((working-workers
-             (att-value
-               'get-filtered-workers
-               config
-               (lambda (w)
-                 (let
-                   ((worker-working? (< 0 (ast-num-children (ast-child 'Queue w))))
-                    (worker-running? (eq? (ast-child 'state w) 'RUNNING)))
-                   worker-working?))))
-       (num-working-workers (length working-workers)))
-     ;(display "num-working-workers: ")
-     ;(displayln num-working-workers)
-      (if (< num-working-workers min-idle) (- min-idle num-working-workers) idle))))
 
 ; only the bootable workers can be considered.
 (define adapt
   (lambda (time)
-    (display "[FUNCTION] adapt\n")
+    (say "[FUNCTION] adapt\n")
     (let*
       ((num-backup-workers (att-value 'get-backup-workers ast))
-       (key
-         (lambda (worker)
-           (cdr (assq (ast-child 'devicetype worker)
-                      '((CUBIEBOARD . 1)
-                        (SAMA5D3 .    0))))))
        (idle-workers
          (att-value
            'get-filtered-workers
@@ -430,6 +427,7 @@
              (and
                (memq (ast-child 'state worker) '(RUNNING BOOTING))
                (= 0 (ast-num-children (ast-child 'Queue worker)))))))
+       (num-idle-workers (length idle-workers))
        (haltable-workers
          (att-value
            'get-filtered-workers
@@ -437,44 +435,50 @@
            (lambda (worker)
              (and
                (memq (ast-child 'state worker) '(RUNNING BOOTING))
-               (>= (- time (ast-child 'timestamp worker)) 30)
-               (= 0 (ast-num-children (ast-child 'Queue worker)))))))
-       (num-haltable-workers (length haltable-workers))
-       (num-idle-workers (length idle-workers)))
-      ;(display "num-idle-workers: ")
-      ;(displayln num-idle-workers)
-      ;(display "num-haltable-workers: ")
-      ;(displayln num-haltable-workers)
-      ;(display "num-backup-workers: ")
-      ;(displayln num-backup-workers)
+               (= 0 (ast-num-children (ast-child 'Queue worker)))
+               (>= (- time (ast-child 'timestamp worker)) 60)))))
+       (num-haltable-workers (length haltable-workers)))
       (cond
         ((> num-haltable-workers num-backup-workers) ; halt
-         (displayln ">>>>>> HALT!")
+         (sayln ">>>>>> HALT!")
          (let*
            ((num-excess-workers (- num-haltable-workers num-backup-workers))
             (sorted-haltable-workers
               (list-sort
-                (lambda (a b) (eq? (ast-child 'state a) 'BOOTING))
+                (lambda (a b)
+                  (or
+                    (> (att-value 'depth a)
+                       (att-value 'depth b))
+                    (and
+                      (= (att-value 'depth a)
+                         (att-value 'depth b))
+                      (or
+                        (and
+                          (eq? (ast-child 'state a) 'BOOTING)
+                          (not (eq? (ast-child 'state b) 'BOOTING)))
+                        (and
+                          (eq? (ast-child 'state a) 'BOOTING)
+                          (eq? (ast-child 'state b) 'BOOTING)
+                          (> (ast-child 'id a) (ast-child 'id b)))))))
                 haltable-workers))
             (sorted-bootable-haltable-workers
               (filter
                 (lambda (x)
-                  (let* ((devicetype (ast-child 'devicetype x))
-                          (bootable (device-characteristic-bootable (hashtable-ref device-table devicetype "error!"))))
+                  (let*
+                    ((devicetype (ast-child 'devicetype x))
+                     (bootable (device-characteristic-bootable (hashtable-ref device-table devicetype "error!"))))
                     (and
                       (>= (- time (ast-child 'timestamp x)) 30)
-                      (eq? bootable #t))))
+                      bootable)))
                   sorted-haltable-workers)))
            (let next ((i num-excess-workers) (rest sorted-bootable-haltable-workers))
              (when (and (> i 0) (not (null? rest)))
                (let ((worker (car rest)))
                  (rewrite-terminal 'state worker 'HALTING)
-                 (add-event
-                   'event-halt-command
-                   (ast-child 'id worker))
+                 (add-event 'event-halt-command (ast-child 'id worker))
                  (next (- i 1) (cdr rest)))))))
         ((< num-idle-workers num-backup-workers) ; boot
-         (displayln ">>>>>> BOOT!")
+         (sayln ">>>>>> BOOT!")
          (let*
            ((off-workers
               (att-value
@@ -484,14 +488,17 @@
             (num-off-workers (length off-workers))
             (sorted-off-workers
               (list-sort
-                (lambda (a b) (> (key a) (key b)))
+                (lambda (a b)
+                  (< (att-value 'depth a)
+                     (att-value 'depth b)))
                 off-workers))
             (sorted-bootable-off-workers
               (filter
                 (lambda (x)
-                  (let* ((devicetype (ast-child 'devicetype x))
-                          (bootable (device-characteristic-bootable (hashtable-ref device-table devicetype "error!"))))
-                    (eq? bootable #t)))
+                  (let*
+                    ((devicetype (ast-child 'devicetype x))
+                     (bootable (device-characteristic-bootable (hashtable-ref device-table devicetype "error!"))))
+                    bootable))
                   sorted-off-workers))
             (num-wanting-workers (- num-backup-workers num-idle-workers)))
            (let next ((i num-wanting-workers) (rest sorted-bootable-off-workers))
@@ -499,9 +506,16 @@
                (let ((worker (car rest)))
                  (rewrite-terminal 'state worker 'BOOTING)
                  (rewrite-terminal 'timestamp worker time)
-                 (add-event
-                   'event-worker-on
-                   (ast-child 'id worker))
+                 (add-event 'event-worker-on (ast-child 'id worker))
+
+                 ; check whether switches should be turned on
+                 (let next ((parent (ast-parent (ast-parent worker))))
+                   (when (eq? (ast-child 'state parent) 'OFF)
+                     (begin
+                       (rewrite-terminal 'state parent 'RUNNING)
+                       (add-event 'event-switch-on (ast-child 'id parent))
+                       (next (ast-parent (ast-parent parent))))))
+
                  (next (- i 1) (cdr rest)))))))))))
 
 
@@ -526,7 +540,15 @@
     (let ((worker (att-value 'lookup-worker config id)))
       (rewrite-terminal 'state worker 'RUNNING)
       (rewrite-terminal 'timestamp worker time)
-      (dispatch-next-request time worker))))
+      (dispatch-next-request time worker)
+
+      ; check whether switches should have been turned on :D
+      (let next ((parent (ast-parent (ast-parent worker))))
+        (when (eq? (ast-child 'state parent) 'OFF)
+          (begin
+            (rewrite-terminal 'state parent 'RUNNING)
+            (add-event 'event-switch-on (ast-child 'id parent))
+            (next (ast-parent (ast-parent parent)))))))))
 
 
 (define event-worker-offline
@@ -535,15 +557,30 @@
       (when (not (eq? (ast-child 'state worker) 'HALTING))
         (begin
           (rewrite-terminal 'state worker 'ERROR)
-          (rewrite-terminal 'timestamp worker time))))))
+          (rewrite-terminal 'timestamp worker time)))
+
+      ; check whether switches can be turned off
+      (let next ((parent (ast-parent (ast-parent worker))))
+        (when (not (att-value 'in-use? parent))
+          (begin
+            (rewrite-terminal 'state parent 'OFF)
+            (add-event 'event-switch-off (ast-child 'id parent))
+            (next (ast-parent (ast-parent parent)))))))))
 
 
 (define event-worker-off
   (lambda (id time)
     (let ((worker (att-value 'lookup-worker config id)))
       (rewrite-terminal 'state worker 'OFF)
-      (rewrite-terminal 'timestamp worker time))))
+      (rewrite-terminal 'timestamp worker time)
 
+      ; check whether switches can be turned off
+      (let next ((parent (ast-parent (ast-parent worker))))
+        (when (not (att-value 'in-use? parent))
+          (begin
+            (rewrite-terminal 'state parent 'OFF)
+            (add-event 'event-switch-off (ast-child 'id parent))
+            (next (ast-parent (ast-parent parent)))))))))
 
 (define event-adapt
   (lambda (time)
@@ -578,16 +615,17 @@
                queue)))
       (if request
         (begin
-          (let*
-            ((processing-time (- time (ast-child 'dispatchtime request)))
-             (speed (/ (ast-child 'size request) processing-time))
-             (deadline (ast-child 'deadline request))
-             (remaining-time (- deadline time))
-             (met-deadline? (<= 0 remaining-time)))
-            (printf "### ~a ~a ~a ~a ~a~n" (ast-child 'size request) speed processing-time met-deadline? remaining-time))
+;          (let*
+;            ((processing-time (- time (ast-child 'dispatchtime request)))
+;             (speed (/ (ast-child 'size request) processing-time))
+;             (deadline (ast-child 'deadline request))
+;             (remaining-time (- deadline time))
+;             (met-deadline? (<= 0 remaining-time)))
+;            (printf "### ~a ~a ~a ~a ~a~n" (ast-child 'size request) speed processing-time met-deadline? remaining-time))
 
+          (rewrite-terminal 'timestamp worker time)
           (rewrite-delete request)
           (dispatch-next-request time worker))
-        (display "[FATAL ERROR] no request with specified id found\n"))))) ; this should never happen
+        (say "[FATAL ERROR] no request with specified id found\n"))))) ; this should never happen
 
 

@@ -28,6 +28,9 @@ enum {
 	EVENT_SCENARIO_START,
 	EVENT_SCENARIO_DONE,
 
+	EVENT_SWITCH_ON,
+	EVENT_SWITCH_OFF,
+
 	EVENT_WORKER_ON,
 	EVENT_WORKER_ONLINE,
 	EVENT_WORKER_OFFLINE,
@@ -59,6 +62,9 @@ static inline const char* event_type_string(int type) {
 	static const char* strings[] = {
 		"SCENARIO_START",
 		"SCENARIO_DONE",
+
+		"SWITCH_ON",
+		"SWITCH_OFF",
 
 		"WORKER_ON",
 		"WORKER_ONLINE",
@@ -93,7 +99,6 @@ Event*	event_append(int type);
 Event*	event_pop(void);
 void	event_print(const Event* e, double time);
 
-double	absolut_timestamp(void);
 double	timestamp(void);
 const char* format_timestamp(double t);
 double read_timestamp(const char* t);

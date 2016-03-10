@@ -64,7 +64,7 @@ $(document).ready(function() {
 
 	d3.select("#cliprect")
 	.attr("width", width)
-	.attr("height", 1000);
+	.attr("height", 2000);
 	var svg_events_back_layer = svg_events.append("g");
 	var svg_events_front_layer = svg_events.append("g");
 
@@ -93,6 +93,65 @@ $(document).ready(function() {
 	svg_xAxis.call(xAxis);
 	svg_yAxis.call(yAxis);
 
+
+
+
+	svg_event_titles.append("line")
+					.attr("width", margin.row)
+					.attr("height", margin.row)
+					.attr("y1", 1.5 * margin.row)
+					.attr("y2", 5.5 * margin.row)
+					.attr("x1", -80 + margin.row/2)
+					.attr("x2", -80 + margin.row/2)
+					.style("stroke", "black");
+
+
+	svg_event_titles.append("line")
+					.attr("width", margin.row)
+					.attr("height", margin.row)
+					.attr("y1", 5.5 * margin.row)
+					.attr("y2", 8.5 * margin.row)
+					.attr("x1", -65 + margin.row/2)
+					.attr("x2", -65 + margin.row/2)
+					.style("stroke", "black");
+
+	for (var i = 1.5; i<6; i++) {
+		svg_event_titles.append("line")
+						.attr("width", margin.row)
+						.attr("height", margin.row)
+						.attr("y1", i * margin.row)
+						.attr("y2", i * margin.row)
+						.attr("x1", -80 + margin.row/2)
+						.attr("x2", -50 + margin.row/2)
+						.style("stroke", "black");
+	}
+	for (var i = 6.5; i<9; i++) {
+		svg_event_titles.append("line")
+						.attr("width", margin.row)
+						.attr("height", margin.row)
+						.attr("y1", i * margin.row)
+						.attr("y2", i * margin.row)
+						.attr("x1", -65 + margin.row/2)
+						.attr("x2", -50 + margin.row/2)
+						.style("stroke", "black");
+	}
+
+	svg_event_titles.append("rect")
+					.attr("width", margin.row)
+					.attr("height", margin.row)
+					.attr("y", 5 * margin.row)
+					.attr("x", -65)
+					.style("fill", "grey")
+					.style("stroke", "black");
+
+	svg_event_titles.append("rect")
+					.attr("width", margin.row)
+					.attr("height", margin.row)
+					.attr("y", 1 * margin.row)
+					.attr("x", -80)
+					.style("fill", "grey")
+					.style("stroke", "black");
+
 	var svg_areas = [];
 	var areas = [];
 
@@ -109,7 +168,7 @@ $(document).ready(function() {
 				if (first_poll) {
 					first_poll = false;
 
-					svg.attr("height", height + margin.top + margin.bottom + margin.middle + margin.row * 7);
+					svg.attr("height", height + margin.top + margin.bottom + margin.middle + margin.row * 9);
 
 					d3.range(8).forEach(function(i) {
 
@@ -128,7 +187,7 @@ $(document).ready(function() {
 						.attr("d", areas[i]);
 
 
-						if (i < 6) {
+						if (i < 8) {
 							// lanes
 							svg_events_front_layer.append("rect")
 							.attr("width", width)
@@ -183,6 +242,8 @@ $(document).ready(function() {
 						"WORK_REQUEST": true,
 						"WORK_COMMAND": true,
 						"WORK_COMPLETE": true,
+						"SWITCH_ON": true,
+						"SWITCH_OFF": true,
 						"WORKER_ON": true,
 						"WORKER_ONLINE": true,
 						"WORKER_OFF": true,
@@ -232,6 +293,25 @@ $(document).ready(function() {
 								f.complete = e;
 							}
 						});
+					}
+					else if (e.e == "SWITCH_ON") {
+						var i;
+						for (i = 0; i < events.length; i++) {
+							var f = events[i];
+							if (f.e == "SWITCH_ON" && f.info["id"] == e.info["id"] && !f.complete) {
+								break;
+							}
+						}
+						if (i == events.length) {
+							var i = id_to_index(e.info.id);
+							events.push(e);
+							e.svg.rect = svg_events_back_layer.append("rect")
+							.attr("y", (i + 1) * margin.row)
+							.attr("height", margin.row)
+							.style("stroke", "none")
+							.style("fill-opacity", 0.8)
+							.style("fill", d3.rgb(colors(i)));
+						}
 					}
 					else if (e.e == "WORKER_ON") {
 
@@ -290,6 +370,13 @@ $(document).ready(function() {
 						}
 
 					}
+					else if (e.e == "SWITCH_OFF") {
+						events.forEach(function(f) {
+							if (f.e == "SWITCH_ON" && f.info["id"] == e.info["id"] && !f.complete) {
+								f.complete = e;
+							}
+						});
+					}
 					else if (e.e == "WORKER_OFF") {
 						events.forEach(function(f) {
 							if (f.e == "WORKER_ON" && f.info["id"] == e.info["id"] && !f.complete) {
@@ -316,7 +403,7 @@ $(document).ready(function() {
 					// remove old events
 					if (e.t < time - past) {
 
-						if (e.e == "WORK_COMMAND" || e.e == "WORKER_ONLINE" || e.e == "WORKER_ON") {
+						if (e.e == "WORK_COMMAND" || e.e == "WORKER_ONLINE" || e.e == "WORKER_ON" || e.e == "SWITCH_ON") {
 							if (e.complete && e.complete.t < time - past) {
 								e.svg.rect.remove();
 								events.splice(i, 1);
@@ -339,7 +426,7 @@ $(document).ready(function() {
 					if (e.e == "WORK_REQUEST") {
 						e.svg.marker.attr("transform", "translate(" + x(e.t) + ",0)");
 					}
-					if (e.e == "WORK_COMMAND" || e.e == "WORKER_ONLINE" || e.e == "WORKER_ON") {
+					if (e.e == "WORK_COMMAND" || e.e == "WORKER_ONLINE" || e.e == "WORKER_ON" || e.e == "SWITCH_ON") {
 						var x1 = x(e.t);
 						if (x1 < 0) x1 = -1;
 						var x2 = width;

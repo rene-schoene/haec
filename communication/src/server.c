@@ -5,35 +5,34 @@
 #include <error.h>
 #include <errno.h>
 
+#include <sys/un.h>
+
 #include <racr/racr.h>
 
 #include "server.h"
 #include "worker.h"
 #include "event.h"
 #include "cambri.h"
+#include "sim.h"
 
 
-// TODO: move this to scheme
-#define TIME_HALTING 13.0
-#define TIME_REBOOTDELAY 12.0
-#define TIME_NOCURRENT 12.0
-#define ADAPTATION_FREQUENCY 20.0
-#define MAX_BOOT_TIME 100.0
+#define TIME_HALTING			13.0
+#define TIME_REBOOTDELAY		12.0
+#define TIME_NOCURRENT			12.0
+//#define ADAPTATION_RATE		20.0
+#define ADAPTATION_RATE			1.0
+#define MAX_BOOT_TIME			100.0
+
+
+
+
+
 
 Server server;
 
 
 void eval_string(const char* str);
 
-
-ssize_t sendf(int s, const char* format, ...) {
-	char line[256];
-	va_list args;
-	va_start(args, format);
-	vsnprintf(line, sizeof(line), format, args);
-	va_end(args);
-	return send(s, line, strlen(line) + 1, 0);
-}
 
 
 void server_log_event(const char* fmt, ...) {
@@ -61,14 +60,20 @@ static int server_command(char* cmd) {
 		printf("exiting...\n");
 	}
 	else if (strcmp(cmd, "status") == 0) {
-		printf(" id   | parent | address:port          | socket | state   | time\n");
-		printf("------+--------+-----------------------+--------+---------+-------------\n");
+		printf(" type   | id   | parent | address:port          | socket | state     | time\n");
+		printf("--------+------+--------+-----------------------+--------+-----------+-------------\n");
 		for (w = worker_next(NULL); w; w = worker_next(w)) {
+			if (!w->is_switch) {
 			char s[INET_ADDRSTRLEN];
 			inet_ntop(AF_INET, &w->addr, s, sizeof(s));
-			printf(" %-4d | %-6d | %-15s:%05d | %6d | %-7s | %s\n",
-				w->id, w->parent_id, s, w->port, w->socket_fd,
+			printf(" worker | %-4d | %-6d | %-15s:%05d | %6d | %-9s | %s\n",
+				w->id, w->parent_id, s, ntohs(w->port), w->socket_fd,
 				worker_state_string(w->state), format_timestamp(time - w->timestamp));
+			}
+			else {
+			printf(" switch | %-4d | %-6d | %21s |        | %-9s | %s\n",
+				w->id, w->parent_id, "", worker_state_string(w->state), format_timestamp(time - w->timestamp));
+			}
 		}
 	}
 	else if (sscanf(cmd, "work %lf %lf", &size, &duration) == 2) {
@@ -128,7 +133,7 @@ static int server_command(char* cmd) {
 			printf("error: %s\n", cmd);
 			return 1;
 		}
-		sendf(w->socket_fd, "halt");
+		worker_send(w, "halt");
 		w->state = WORKER_HALTING;
 		w->timestamp = timestamp();
 	}
@@ -181,30 +186,50 @@ static int server_command(char* cmd) {
 
 
 static void server_new_connection(int s) {
+
+#ifndef SIM
 	struct sockaddr_in client;
 	socklen_t size = sizeof(client);
 	int newfd = accept(s, (struct sockaddr*) &client, &size);
-	if (newfd < 0) perror("accept");
-	else {
-		Worker* w = worker_find_by_address(client.sin_addr, 0);
-		if (!w) {
-			char s[INET_ADDRSTRLEN];
-			inet_ntop(AF_INET, &client.sin_addr, s, sizeof(s));
-			printf("unexpected connection from %s:%d\n", s, client.sin_port);
-			close(newfd);
-			return;
-		}
-
-		FD_SET(newfd, &server.fds);
-		if (newfd > server.fdmax) server.fdmax = newfd;
-
-		w->port = client.sin_port;
-		w->socket_fd = newfd;
-
-		Event* e = event_append(EVENT_WORKER_ONLINE);
-		e->worker = w;
-
+	if (newfd < 0) {
+		perror("accept");
+		return;
 	}
+	Worker* w = worker_find_by_address(client.sin_addr, client.sin_port);
+	if (!w) {
+		char s[INET_ADDRSTRLEN];
+		inet_ntop(AF_INET, &client.sin_addr, s, sizeof(s));
+		printf("unexpected connection from %s:%d\n", s, ntohs(client.sin_port));
+		close(newfd);
+		return;
+	}
+#else
+	struct sockaddr_un client;
+	socklen_t size = sizeof(client);
+	int newfd = accept(s, (struct sockaddr*) &client, &size);
+	if (newfd < 0) {
+		perror("accept");
+		return;
+	}
+	Worker* w = worker_find_by_id(atoi(client.sun_path));
+	if (!w) {
+		printf("unexpected connection\n");
+		close(newfd);
+		return;
+	}
+	if (w->state == WORKER_OFF) {
+		close(newfd);
+		return;
+	}
+#endif
+
+	FD_SET(newfd, &server.fds);
+	if (newfd > server.fdmax) server.fdmax = newfd;
+
+	w->socket_fd = newfd;
+
+	Event* e = event_append(EVENT_WORKER_ONLINE);
+	e->worker = w;
 }
 
 
@@ -223,7 +248,6 @@ static void server_receive(int s) {
 		FD_CLR(s, &server.fds);
 
 		w->socket_fd = -1;
-		w->port = 0;
 
 		Event* e = event_append(EVENT_WORKER_OFFLINE);
 		e->worker = w;
@@ -346,9 +370,25 @@ void server_process_events(void) {
 			break;
 
 		case EVENT_SCENARIO_DONE:
+			server.running = 0;
+			break;
+
+		case EVENT_SWITCH_ON:
+			if (!w->is_switch) break;
+			w->state = WORKER_RUNNING;
+			w->timestamp = time;
+			cambri_set_mode(w->id, CAMBRI_CHARGE);
+			break;
+
+		case EVENT_SWITCH_OFF:
+			if (!w->is_switch) break;
+			w->state = WORKER_OFF;
+			w->timestamp = time;
+			cambri_set_mode(w->id, CAMBRI_OFF);
 			break;
 
 		case EVENT_WORKER_ON:
+			if (w->is_switch) break;
 			if (w->state != WORKER_OFF && w->state != WORKER_REBOOTING) {
 				printf("worker %d cannot be turned on as it is not off\n", w->id);
 				w->state = WORKER_ERROR;
@@ -382,7 +422,6 @@ void server_process_events(void) {
 			w->state = WORKER_OFF;
 			w->timestamp = time;
 			w->socket_fd = -1;
-			w->port = 0;
 			cambri_set_mode(w->id, CAMBRI_OFF);
 			racr_call_str("event-worker-off", "id", w->id, time);
 			break;
@@ -398,7 +437,8 @@ void server_process_events(void) {
 			break;
 
 		case EVENT_WORK_COMMAND:
-			sendf(w->socket_fd, "work %d %lf", e->work_id, e->load_size);
+			if (w->is_switch) break;
+			worker_send(w, "work %d %lf", e->work_id, e->load_size);
 			break;
 
 		case EVENT_WORK_ACK:
@@ -409,16 +449,17 @@ void server_process_events(void) {
 			break;
 
 		case EVENT_MEM_COMMAND:
-			sendf(w->socket_fd, "mem");
+			worker_send(w, "mem");
 			break;
 
 		case EVENT_MEM_ACK:
 			break;
 
 		case EVENT_HALT_COMMAND:
-			sendf(w->socket_fd, "halt");
+			if (w->is_switch) break;
+			worker_send(w, "halt");
 			w->state = WORKER_HALTING;
-			w->timestamp = timestamp();
+			w->timestamp = time;
 			break;
 
 		case EVENT_HALT_ACK:
@@ -547,51 +588,69 @@ static void server_done(int sig) { server.running = 0; }
 
 
 void server_run(int argc, char** argv) {
-
 	if (argc == 2) {
 		Event* e = event_append(EVENT_SCENARIO_START);
 		e->scenario = strdup(argv[1]);
 	}
 
+	server.work_counter = 0;
+	server.timestamp = absolute_timestamp();
+	server.e_meter_timestamp = 0;
+	server.running = 1;
 
-	if (cambri_init()) printf("error initializing cambri\n");
 	if (worker_init()) {
 		printf("error initializing workers\n");
 		return;
 	}
+	if (cambri_init()) {
+		printf("error initializing cambri\n");
+		return;
+	}
 
 
+#ifndef SIM
 	int listener = socket(AF_INET, SOCK_STREAM, 0);
+#else
+	int listener = socket(AF_UNIX, SOCK_STREAM, 0);
+#endif
+
 	if (listener < 0) error(1, 0, "socket");
 	int yes = 1;
 	if (setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) < 0) {
 		error(1, 0, "setsockopt");
 	}
+
+
 	struct sockaddr_in addr = { AF_INET, htons(PORT), { INADDR_ANY } };
+#ifndef SIM
 	if (bind(listener, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-		error(1, 0, "bind");
+		error(1, 0, "bind1");
 	}
-	listen(listener, 5);
+#else
+	struct sockaddr_un addr_un = { AF_UNIX, "0000" };
+    unlink(addr_un.sun_path);
+	if (bind(listener, (struct sockaddr*)&addr_un, sizeof(addr_un.sun_family) + strlen(addr_un.sun_path)) < 0) {
+		perror("bind1");
+	}
+#endif
+
+	listen(listener, 100);
+
 
 	int commander = socket(AF_INET, SOCK_DGRAM, 0);
 	if (commander < 0) error(1, 0, "socket");
 	addr.sin_port = htons(PORT + 1);
 	if (bind(commander, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-		error(1, 0, "bind");
+		error(1, 0, "bind2");
 	}
-
 
 
 	FD_ZERO(&server.fds);
 	FD_SET(STDIN, &server.fds);
 	FD_SET(listener, &server.fds);
 	FD_SET(commander, &server.fds);
-
 	server.fdmax = commander;
-	server.work_counter = 0;
-	server.timestamp = absolut_timestamp();
-	server.e_meter_timestamp = 0;
-	server.running = 1;
+
 	signal(SIGINT, server_done);
 
 	server.log_fd = fopen("event.log", "w");
@@ -618,13 +677,13 @@ void server_run(int argc, char** argv) {
 		struct timeval timeout = { 0, 50000 };
 		int count;
 		for (;;) {
-tryagain:
+TRYAGAIN:
 			count = select(server.fdmax + 1, &fds, NULL, NULL, &timeout);
 			if (count == 0) break;
 			if (count < 0) {
 				if (errno == EINTR) {
 					printf("EINTR\n");
-					goto tryagain;
+					goto TRYAGAIN;
 				}
 				perror("select");
 				break;
@@ -677,7 +736,7 @@ tryagain:
 			}
 		}
 
-		if (timestamp() - adapt_time > ADAPTATION_FREQUENCY ) {
+		if (timestamp() - adapt_time > ADAPTATION_RATE) {
 			Event* e = event_append(EVENT_ADAPT);
 			e->worker = w;
 			adapt_time = timestamp();

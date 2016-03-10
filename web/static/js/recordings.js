@@ -142,6 +142,8 @@ var Graph = function(recording_name, ready_function, recording_title, color) {
 				"WORK_REQUEST": true,
 				"WORK_COMMAND": true,
 				"WORK_COMPLETE": true,
+				"SWITCH_ON": true,
+				"SWITCH_OFF": true,
 				"WORKER_ON": true,
 				"WORKER_ONLINE": true,
 				"WORKER_OFF": true,
@@ -161,9 +163,26 @@ var Graph = function(recording_name, ready_function, recording_title, color) {
 
 			if (e.e == "WORK_REQUEST") {
 				events.push(e);
+
+				e.svg.dead = svg_events_front_layer.append("polyline")
+				.attr("class", "dead")
+				.style("visibility", "hidden")
+				.attr("points", "0,0 -5,5 0,10 0,0");
+
 				e.svg.marker = svg_events_front_layer.append("polyline")
 				.attr("class", "marker")
-				.attr("points", "0,0 5,5 0,10 0,0");
+				.attr("points", "0,0 5,5 0,10 0,0")
+				.on("mouseover", function(){
+					e.svg.dead.style("visibility", "visible");
+					e.svg.marker.attr("class", "marker-highlight");
+					if (e.command) e.command.svg.rect.attr("class", "work-command-highlight");
+				})
+				.on("mouseout", function(){
+					e.svg.dead.style("visibility", "hidden");
+					e.svg.marker.attr("class", "marker");
+					if (e.command) e.command.svg.rect.attr("class", "work-command");
+				})
+
 
 			}
 			else if (e.e == "WORK_COMMAND") {
@@ -174,7 +193,22 @@ var Graph = function(recording_name, ready_function, recording_title, color) {
 				e.svg.rect = svg_events_front_layer.append("rect")
 				.attr("class", "work-command")
 				.attr("y", y_scale)
-				.attr("height", margin.row - 6);
+				.attr("height", margin.row - 6)
+				.on("mouseover", function(){
+					e.svg.rect.attr("class", "work-command-highlight");
+					if (e.request) {
+						e.request.svg.dead.style("visibility", "visible");
+						e.request.svg.marker.attr("class", "marker-highlight");
+					}
+				})
+				.on("mouseout", function(){
+					e.svg.rect.attr("class", "work-command");
+					if (e.request) {
+						e.request.svg.dead.style("visibility", "hidden");
+						e.request.svg.marker.attr("class", "marker");
+					}
+				})
+
 
 				events.forEach(function(f) {
 					if (f.e == "WORK_REQUEST" && f.info["work-id"] == e.info["work-id"]) {
@@ -191,6 +225,25 @@ var Graph = function(recording_name, ready_function, recording_title, color) {
 						f.complete = e;
 					}
 				});
+			}
+			else if (e.e == "SWITCH_ON") {
+				var i;
+				for (i = 0; i < events.length; i++) {
+					var f = events[i];
+					if (f.e == "SWITCH_ON" && f.info["id"] == e.info["id"] && !f.complete) {
+						break;
+					}
+				}
+				if (i == events.length) {
+					var i = id_to_index(e.info.id);
+					events.push(e);
+					e.svg.rect = svg_events_back_layer.append("rect")
+					.attr("y", (i + 1) * margin.row)
+					.attr("height", margin.row)
+					.style("stroke", "none")
+					.style("fill-opacity", 0.8)
+					.style("fill", d3.rgb(colors(i)));
+				}
 			}
 			else if (e.e == "WORKER_ON") {
 				// only consider event, if no previous WORKER_ON event was emited
@@ -222,6 +275,13 @@ var Graph = function(recording_name, ready_function, recording_title, color) {
 				.style("fill-opacity", 0.8)
 				.style("fill", d3.rgb(colors(i)));
 
+			}
+			else if (e.e == "SWITCH_OFF") {
+				events.forEach(function(f) {
+					if (f.e == "SWITCH_ON" && f.info["id"] == e.info["id"] && !f.complete) {
+						f.complete = e;
+					}
+				});
 			}
 			else if (e.e == "WORKER_OFF") {
 				events.forEach(function(f) {
@@ -275,8 +335,9 @@ Graph.set_x_domain = function(a, b) {
 
 		if (e.e == "WORK_REQUEST") {
 			e.svg.marker.attr("transform", "translate(" + self.x_scale(e.t) + ",0)");
+			e.svg.dead.attr("transform", "translate(" + self.x_scale(e.info.deadline) + ",0)");
 		}
-		if (e.e == "WORK_COMMAND" || e.e == "WORKER_ONLINE" || e.e == "WORKER_ON") {
+		if (e.e == "WORK_COMMAND" || e.e == "WORKER_ONLINE" || e.e == "WORKER_ON" || e.e == "SWITCH_ON") {
 			var x1 = self.x_scale(e.t);
 			if (x1 < 0) x1 = -1;
 			var x2 = self.width;
@@ -378,9 +439,8 @@ Energy.set_x_domain = function(t1, t2) {
 	for (var i = 0; i < self.lines.length; i++) {
 		self.svg_lines[i].attr("d", self.lines[i]);
 	}
-
-
 };
+
 
 
 Energy.add_line = function(statuses, color, name) {
@@ -431,6 +491,8 @@ $(document).ready(function() {
 	var G, H;
 
 
+
+/*
 	i = new Graph("x6", function(i){
 		e.set_x_domain(0, domain);
 		i.set_x_domain(0, domain);
@@ -458,6 +520,8 @@ $(document).ready(function() {
 			e.add_line(h.json.statuses, "green", "load-consolidating scheduler with adaptive switching of workers");
 		}, "load-consolidating scheduler with adaptive switching of workers", "green");
 	};
+*/
+
 
 
 /*
@@ -480,6 +544,15 @@ $(document).ready(function() {
 		e.add_line(k.json.statuses, "#777");
 	});
 */
+
+	i = new Graph("..", function(i){
+		var domain = 60 * 60;
+		e.set_x_domain(0, domain);
+		i.set_x_domain(0, domain);
+		e.add_line(i.json.statuses, "red", "simple scheduler");
+		G();
+	}, "last run", "red");
+
 
 });
 

@@ -13,18 +13,21 @@ LF = -pthread -lrt
 
 all: server worker mquat.scm
 
-.PHONY: clean bytecode run
+# simulator
+CF += -DSIM -g
 
-SERVERSRC = src/main.c src/server.c src/cambri.c src/event.c src/worker.c
+SERVERSRC = src/main.c src/server.c src/cambri.c src/event.c src/worker.c src/sim.c
 SERVEROBJ = $(SERVERSRC:src/%.c=obj/%.o)
 
-server: Makefile $(SERVEROBJ) $(LRACR)
+server: Makefile $(SERVEROBJ)
 	gcc $(LF) $(LRACR) $(SERVEROBJ) -o $@
 
 
 obj/%.o: src/%.c Makefile
 	@mkdir -p obj
 	gcc $(CF) $(CRACR) $< -c -o $@
+
+
 
 
 worker: Makefile obj/worker_main.o
@@ -37,7 +40,7 @@ obj/worker_main.o: Makefile src/worker_main.c
 
 bytecode: mquat.scm
 	@cd $(MQUAT_PATH) && make racket
-	WD="$$PWD" &&\
+	@WD="$$PWD" &&\
 	cd $(RACR_PATH)/racr-c && ./bin/make_bc "`echo $$WD/bytecode`"
 
 mquat.scm: $(MQUAT_PATH)/mquat.scm
@@ -49,3 +52,5 @@ clean:
 
 run: all
 	@rlwrap ./server
+
+.PHONY: clean bytecode run
